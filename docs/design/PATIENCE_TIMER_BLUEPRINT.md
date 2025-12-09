@@ -1,7 +1,7 @@
 # Patience Timer Blueprint: Sequential CallManager with Real-Time UX
 
 **Document ID**: PATIENCE_TIMER_BLUEPRINT  
-**Date**: December 9, 2025  @ 4:30PM
+**Date**: December 9, 2025 @ 4:30PM
 **Status**: Architecture Specification for Implementation  
 **Branch Requirement**: `feat/patience-timer-sequential` (dedicated implementation branch)
 
@@ -1547,6 +1547,64 @@ describe("[TIMER-UI-001] Real-Time Progress Timer", () => {
 ✅ **No Stubs Guarantee**: Deferral and retry ensure full-quality content  
 ✅ **Infrastructure Visibility**: Users understand API constraints, not perceive bugs  
 ✅ **Foundation for Batch**: Sequential approach readies system for batch queries later
+
+---
+
+## Performance Roadmap: Sequential → Batch
+
+### Phase 1: Sequential Implementation (This Project - Stages 1-5)
+
+**Model:** 1 structure call + N chapter calls (sequential, one at a time)  
+**Time Characteristics:**
+
+- 10-page ebook: ~55 seconds (minimal quota waits)
+- 20-page ebook: ~2-3 minutes (1 quota reset window)
+- 60-page ebook: ~3-4 minutes (3 quota reset windows)
+- Guarantee: Zero data loss, all chapters complete
+
+**User Experience:**
+
+- Real-time timer showing exact progress
+- Transparency during quota waits ("Waiting for API quota reset...")
+- Patient, honest UX
+
+### Phase 2: Batch Implementation (Future - Separate Epic)
+
+**Model:** Multiple calls per batch (5-10 calls/batch based on quota window)  
+**Key Insight:** Once batch queries implemented, same content takes significantly less time
+
+**Time Characteristics After Batch:**
+
+- 10-page ebook: ~15-20 seconds (single batch, minimal wait)
+- 20-page ebook: ~40-50 seconds (2 batches max, one quota reset)
+- **60-page ebook: ~1-1.5 minutes (6-8 batches, 2 quota resets vs 3 sequential)**
+
+**Performance Improvement:**
+
+```
+Sequential (Phase 1):    60-page → 3-4 minutes
+Batch (Phase 2):        60-page → 1-1.5 minutes
+Improvement:            ~60-70% faster (2.5-3x speedup)
+```
+
+**Migration Path:**
+
+1. Sequential foundation complete (robust, tested, transparent)
+2. Batch implementation layer added (CallManager extended to support batch groups)
+3. Frontend timer updates (shows batch progress instead of per-chapter)
+4. Zero breaking changes to existing API/UX
+
+### Why Sequential First?
+
+- **Honest foundation:** Sequential is real quota behavior, batch is optimization
+- **Testability:** Sequential easier to debug, validate, understand
+- **User trust:** Don't promise batch performance, deliver sequential, then delight with batch
+- **Risk management:** Sequential works with free tier, batch may need config changes
+- **Code clarity:** Sequential CallManager logic clear, batch adds complexity on top
+
+**Bottom Line:** Sequential Phase 1 delivers 100% functional ebook generation with patient transparency. Batch Phase 2 optimizes performance without changing user-visible behavior - just makes timer run faster.
+
+---
 
 **Key Differences from Current System**:
 
