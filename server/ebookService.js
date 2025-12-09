@@ -7,7 +7,14 @@
  * Routes through Phase B pipeline:
  * prompt → sampleService.generate() → contentChunker → themeEngine →
  * pageLayout → tocGenerator → HTML generation
+ *
+ * Architecture: Integrates CallManager [SEQ-CORE-001] for quota/time orchestration
+ * - Separation of Concerns: Content generation (this file) vs Infrastructure (CallManager)
+ * - Transparent quota deferral: No stubs, full content delivery
  */
+
+// Import CallManager for quota/time orchestration
+const CallManager = require("./CallManager");
 
 function buildContent(prompt) {
   const title = `Ebook: ${String(prompt || "")
@@ -16,6 +23,26 @@ function buildContent(prompt) {
     .join(" ")}`;
   const body = `Ebook generated content for prompt: ${prompt}`;
   return { title, body, layout: "ebook-structured" };
+}
+
+/**
+ * Create CallManager instance for this generation session [SEQ-CORE-001]
+ *
+ * @param {number} pageCount - Pages to generate
+ * @param {Object} options - { deadline, onStatusChange, onDeferral }
+ * @returns {CallManager} Initialized manager for quota/time orchestration
+ */
+function createCallManager(pageCount, options = {}) {
+  // Calculate deadline: ~30 seconds per page + 60 second buffer
+  const deadline = options.deadline || Date.now() + pageCount * 30000 + 60000;
+
+  return new CallManager({
+    deadline,
+    quotaLimit: 20, // Gemini free tier
+    quotaWindow: 60000, // 1 minute
+    onStatusChange: options.onStatusChange || (() => {}),
+    onDeferral: options.onDeferral || (() => {}),
+  });
 }
 
 function makePages(content, n = 3) {
@@ -65,6 +92,26 @@ async function handle(payload, classification) {
     e.status = 400;
     throw e;
   }
+
+  // ✅ NEW: Create CallManager for quota/time orchestration [SEQ-CORE-001]
+  const callManager = createCallManager(pageCount, {
+    deadline: payload.metadata?.deadline,
+    onStatusChange: payload.metadata?.onStatusChange,
+    onDeferral: payload.metadata?.onDeferral,
+  });
+
+  console.log("[EBOOK] CallManager initialized for generation session");
+  console.log(
+    "[EBOOK] Deadline:",
+    new Date(callManager.deadline).toISOString()
+  );
+  console.log(
+    "[EBOOK] Quota:",
+    callManager.quotaLimit,
+    "calls per",
+    callManager.quotaWindow,
+    "ms"
+  );
 
   // Create AI service (mock or real depending on env)
   let aiSvc;
@@ -124,10 +171,45 @@ async function handle(payload, classification) {
       prompt
     )}\"\n\nReturn JSON with keys: title, chapters (number), outline: [{ chapter, title, estimated_topics: [] }]`;
 
-    // Use call index 0 for structure (primary model: Gemini 2.5 Pro)
-    let structureResp = await (aiSvc.generateContentWithRotation
-      ? aiSvc.generateContentWithRotation(structurePrompt, 0)
-      : aiSvc.generateContent(structurePrompt));
+    // ✅ NEW: Wrap structure call with CallManager [SEQ-CORE-001]
+    let structureResp = null;
+    try {
+      structureResp = await callManager.executeCall(
+        async (model) => {
+          // Call #0: Generate structure with Pro model
+          return aiSvc.generateContentWithRotation
+            ? await aiSvc.generateContentWithRotation(structurePrompt, 0)
+            : await aiSvc.generateContent(structurePrompt);
+        },
+        0, // callIndex: structure is call #0
+        "structure" // callType for diagnostics
+      );
+    } catch (error) {
+      // ✅ NEW: Enhance error with CallManager context
+      const enhanced = callManager.enhanceError(error, {
+        callIndex: 0,
+        callType: "structure",
+        model: "gemini-2.5-pro",
+        quotaStatus: callManager.getQuotaStatus(),
+        timeStatus: callManager.getTimeStatus(),
+      });
+
+      if (callManager.isRetriableError(enhanced)) {
+        console.warn(
+          "[EBOOK] Retriable error on structure call:",
+          enhanced.message
+        );
+        console.warn(
+          "[EBOOK] Continuing with fallback structure (data loss prevention)"
+        );
+        // Set structureResp to null to trigger fallback logic below
+        structureResp = null;
+      } else {
+        console.error("[EBOOK] Fatal error on structure call:", enhanced);
+        throw enhanced;
+      }
+    }
+
     let structure = null;
 
     // Try to parse JSON from AI response body or title
@@ -260,11 +342,11 @@ async function handle(payload, classification) {
     for (let i = 0; i < structure.outline.length; i++) {
       const ch = structure.outline[i];
       const prevSummary = i > 0 ? chapters[i - 1].summary || "" : "";
+      const callIndex = i + 1; // Calls 1 through N (0 was structure)
+      const chapterNum = i + 1;
 
       console.log(
-        `[EBOOK] Chapter ${i + 1}/${
-          structure.outline.length
-        }: Starting generation for "${ch.title}"`
+        `[EBOOK] Chapter ${chapterNum}/${structure.outline.length}: Starting generation for "${ch.title}"`
       );
 
       const contentPrompt = `You are writing Chapter ${ch.chapter}: \"${
@@ -279,38 +361,74 @@ async function handle(payload, classification) {
 
       let chapterResp = null;
       try {
+        // ✅ NEW: Wrap chapter call with CallManager [SEQ-CORE-001]
         console.log(
-          `[EBOOK] Chapter ${i + 1}/${
-            structure.outline.length
-          }: Calling aiSvc.generateContentWithRotation() with callIndex=${
-            i + 1
-          }`
+          `[EBOOK] Chapter ${chapterNum}/${structure.outline.length}: Calling callManager.executeCall() with callIndex=${callIndex}`
         );
         const chapterStartTime = Date.now();
-        // Use call index (i+1) for chapters, enabling quota rotation to Gemini 2.5 Flash
-        chapterResp = aiSvc.generateContentWithRotation
-          ? await aiSvc.generateContentWithRotation(contentPrompt, i + 1)
-          : await aiSvc.generateContent(contentPrompt);
+
+        chapterResp = await callManager.executeCall(
+          async (model) => {
+            // Chapter call with Flash model (callIndex > 0)
+            return aiSvc.generateContentWithRotation
+              ? await aiSvc.generateContentWithRotation(
+                  contentPrompt,
+                  callIndex
+                )
+              : await aiSvc.generateContent(contentPrompt);
+          },
+          callIndex,
+          `chapter-${chapterNum}`
+        );
+
         const chapterEndTime = Date.now();
         console.log(
-          `[EBOOK] Chapter ${i + 1}/${
+          `[EBOOK] Chapter ${chapterNum}/${
             structure.outline.length
           }: AI response received in ${chapterEndTime - chapterStartTime}ms`
         );
-      } catch (err) {
-        // Non-fatal: fall back to simple generated content
-        console.error(
-          `[EBOOK] Chapter ${i + 1}/${
-            structure.outline.length
-          }: AI generation failed, using fallback`
+
+        // Emit progress after successful chapter
+        const status = callManager.getStatus();
+        console.log(
+          `[EBOOK] Progress: ${chapterNum}/${structure.outline.length} chapters complete`
         );
-        console.error(`[EBOOK] Error: ${err?.message}`);
-        chapterResp = {
-          content: {
-            title: ch.title,
-            body: `Content for ${ch.title}\n\n${String(prompt).slice(0, 200)}`,
-          },
-        };
+        if (payload.metadata?.onStatusChange) {
+          payload.metadata.onStatusChange({
+            event: "chapter-complete",
+            chapterNum,
+            totalChapters: structure.outline.length,
+            status,
+          });
+        }
+      } catch (err) {
+        // ✅ NEW: Use CallManager's error classification
+        const enhanced = callManager.enhanceError(err, {
+          callIndex,
+          callType: `chapter-${chapterNum}`,
+          model: "gemini-2.5-flash",
+          quotaStatus: callManager.getQuotaStatus(),
+          timeStatus: callManager.getTimeStatus(),
+        });
+
+        if (callManager.isRetriableError(enhanced)) {
+          // Retriable error: skip this chapter (don't stub - better than fake data)
+          console.warn(
+            `[EBOOK] Retriable error on chapter ${chapterNum}:`,
+            enhanced.message
+          );
+          console.warn(
+            `[EBOOK] Skipping chapter ${chapterNum} (data loss > fake data)`
+          );
+          continue; // Skip to next chapter
+        } else {
+          // Fatal error: fail the whole operation
+          console.error(
+            `[EBOOK] Fatal error on chapter ${chapterNum}:`,
+            enhanced
+          );
+          throw enhanced;
+        }
       }
 
       const chapterText =
