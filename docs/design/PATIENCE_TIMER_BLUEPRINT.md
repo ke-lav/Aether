@@ -59,6 +59,54 @@
 
 ---
 
+## Architectural Principle: Separation of Concerns
+
+**Core Concept**: CallManager separates **infrastructure orchestration** (quota, time, retry) from **content generation** (prompts, AI calls, assembly).
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ebookService (Content Generation)                              │
+│  ─────────────────────────────────────────────────────────────  │
+│  • Know: What to generate (structure, chapters, themes)         │
+│  • Do: Assemble prompts, parse responses, format output         │
+│  • Don't care: How many API calls, when quota resets            │
+│                                                                 │
+│  Dependency: CallManager for orchestrated API access            │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  CallManager (Infrastructure Orchestration)                     │
+│  ─────────────────────────────────────────────────────────────  │
+│  • Know: Quota limits (20 calls/min), time budget, constraints  │
+│  • Do: Track calls, defer when exhausted, manage time budget    │
+│  • Don't care: What prompts are, what content is generated      │
+│                                                                 │
+│  Dependency: None (independent orchestration layer)             │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  aiService (AI Model Access)                                    │
+│  ─────────────────────────────────────────────────────────────  │
+│  • Know: Model names, API endpoints, request format             │
+│  • Do: Make authenticated calls, handle raw API responses       │
+│  • Don't care: Quota windows, time budgets, retries             │
+│                                                                 │
+│  Dependency: None (pure API adapter)                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Benefits of This Separation**:
+
+1. **Independent Testing**: Test CallManager quota logic without generating content
+2. **Reusability**: CallManager works with any content service (images, summaries, etc.)
+3. **Clear Responsibilities**: Each layer has single, focused concern
+4. **Easier Evolution**: Batch queries layer into CallManager, not ebookService
+5. **Scalability**: Infrastructure constraints don't bleed into business logic
+
+**Key Insight**: ebookService continues to work exactly as before. CallManager wraps AI calls transparently. Content generation logic is unchanged.
+
+---
+
 ## Backend Architecture
 
 ### SEQ-CORE-001: CallManager Sequential Orchestration
