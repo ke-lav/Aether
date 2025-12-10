@@ -1261,27 +1261,30 @@ Through detailed code analysis, found: **Architectural routing collision**
 
 ### Testing Infrastructure Created
 
-**Automated Test Scripts**:
+**Automated Test Scripts** (located in `scripts/` directory):
 
-1. **test-step1.js** - Validates HTML pipeline (Steps 1 & 3)
+1. **scripts/test-step1.js** - Validates HTML pipeline (Steps 1 & 3)
 
    - Verifies HTML field present in response
    - Checks HTML length > 5000 bytes
    - Confirms title shows actual chapter name (not placeholder)
    - Result: ✅ **PASS** - All checks verified
    - Output: HTML 33KB+, title shows "Benny's Cozy Burrow"
+   - Run: `node scripts/test-step1.js`
 
-2. **test-title-debug.js** - Debugs title extraction
+2. **scripts/test-title-debug.js** - Debugs title extraction
 
    - Traces title source through response
    - Shows title extraction logic verification
    - Result: ✅ **PASS** - Title extraction confirmed working
+   - Run: `node scripts/test-title-debug.js`
 
-3. **test-cache-clear.js** - Tests cache endpoint (Step 2.2)
+3. **scripts/test-cache-clear.js** - Tests cache endpoint (Step 2.2)
    - POST request to /api/cache/clear endpoint
    - Verifies successful response
    - Confirms results count returned
    - Result: ✅ **PASS** - Cleared 657 cached results
+   - Run: `node scripts/test-cache-clear.js`
 
 ### Implementation Details
 

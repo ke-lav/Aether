@@ -268,24 +268,27 @@ Response:
 
 ## Automated Test Scripts Created
 
-### test-step1.js
+### test-step1.js (at `scripts/test-step1.js`)
 
 - Tests HTML field presence and size
 - Tests title field presence and content
 - Tests chapters array
 - **Result**: ✅ ALL PASS
+- **Run**: `node scripts/test-step1.js`
 
-### test-title-debug.js
+### test-title-debug.js (at `scripts/test-title-debug.js`)
 
 - Extracts title from multiple sources
 - Compares chapter title vs response title
 - **Result**: ✅ Confirmed titles match
+- **Run**: `node scripts/test-title-debug.js`
 
-### test-cache-clear.js
+### test-cache-clear.js (at `scripts/test-cache-clear.js`)
 
 - Calls POST /api/cache/clear
 - Verifies success and counts
 - **Result**: ✅ Cleared 657 results
+- **Run**: `node scripts/test-cache-clear.js`
 
 ---
 

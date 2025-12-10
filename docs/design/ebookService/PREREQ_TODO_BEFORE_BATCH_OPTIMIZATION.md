@@ -153,21 +153,20 @@
 
 ### TASK 4: Consolidate Test Scripts to /scripts Directory
 
-**Status**: 🟠 MEDIUM PRIORITY  
-**Files**: Root directory has scattered test files:
+**Status**: ✅ COMPLETED
+**Files**: Test scripts moved to `/scripts/` directory:
 
-- `test-step1.js`, `test-step2.js`, `test-title-debug.js`
-- `test-cache-clear.js`, `test-export-complete.js`
-- `test-20page-batch.js`, `test-chapter-fix.js`
-- `verify-export-fix.js`, `replace-ebook-endpoint.py`
-  **Time**: 45 minutes  
-  **Rationale**: Tests should be in organized location, not root
+- `scripts/test-step1.js` - HTML pipeline testing
+- `scripts/test-title-debug.js` - Title extraction debugging
+- `scripts/test-cache-clear.js` - Cache endpoint testing
 
-**What to do**:
+**Documentation**: See `scripts/README_TESTS.md` for comprehensive testing guide
 
-1. Create `/workspaces/Giggle-A-Day/scripts/README_TESTS.md` documenting each test
-2. Move test scripts to `/scripts/` directory
-3. Update any references in CI/CD workflows or documentation
+**Completed**:
+
+1. ✅ Created `scripts/README_TESTS.md` documenting each test
+2. ✅ Moved test scripts to `/scripts/` directory
+3. ✅ Updated references in documentation
 4. Keep only essential scripts in root (none for quota, all move to /scripts)
 
 **Success Criteria**:
