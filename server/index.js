@@ -3244,6 +3244,326 @@ app.get("/api/ebook/:jobId", (req, res) => {
   res.json(result);
 });
 
+// ==================== STAGE 3: PROGRESS TRACKING ENDPOINT ====================
+/**
+ * POST /api/ebook/generate-with-progress
+ * Initiate ebook generation with real-time progress tracking via Server-Sent Events (SSE)
+ *
+ * Purpose: Stream real-time CallManager status updates to frontend for progress UI
+ * Architecture: CallManager callbacks → SSE stream → Frontend progress component
+ *
+ * Request:
+ * {
+ *   "prompt": "Article content or URL",
+ *   "theme": "dark" | "light" | "corporate" | "bold",
+ *   "pageCount": 3-20,
+ *   "colorPalette": "default",
+ *   "fontSizeScale": 0.8-1.2
+ * }
+ *
+ * Response: Server-Sent Events stream (text/event-stream)
+ * Events: quota-update, time-update, call-start, call-complete, call-deferred, time-tight, error, complete
+ *
+ * Reference: PATIENCE_TIMER_BUILD_STAGE_3_DESIGN.md [SEQ-FRONTEND-001]
+ */
+app.post("/api/ebook/generate-with-progress", async (req, res) => {
+  const startTime = Date.now();
+  const reqId = req.id || "unknown";
+
+  // Set long timeout for ebook generation
+  req.setTimeout(600000); // 10 minutes
+  res.setTimeout(600000);
+
+  console.log(
+    `[${new Date().toISOString()}] [${reqId}] POST /api/ebook/generate-with-progress started`
+  );
+
+  // === Step 1: Parse & Validate Request ===
+  const {
+    prompt,
+    theme = "dark",
+    pageCount = 10,
+    colorPalette = "default",
+    fontSizeScale = 1.0,
+  } = req.body;
+
+  // Validate prompt
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    // Write error event before closing connection
+    res.writeHead(400, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.write(
+      `data: ${JSON.stringify({
+        type: "error",
+        payload: {
+          code: "INVALID_PROMPT",
+          message: "Prompt is required and must be a non-empty string",
+          isRetriable: false,
+        },
+      })}\n\n`
+    );
+    return res.end();
+  }
+
+  // Validate theme
+  const validThemes = ["dark", "light", "corporate", "bold"];
+  if (!validThemes.includes(theme)) {
+    res.writeHead(400, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+    });
+    res.write(
+      `data: ${JSON.stringify({
+        type: "error",
+        payload: {
+          code: "INVALID_THEME",
+          message: `Invalid theme. Must be one of: ${validThemes.join(", ")}`,
+          isRetriable: false,
+        },
+      })}\n\n`
+    );
+    return res.end();
+  }
+
+  // Validate pageCount
+  const pageCountNum = parseInt(pageCount, 10);
+  if (isNaN(pageCountNum) || pageCountNum < 3 || pageCountNum > 20) {
+    res.writeHead(400, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+    });
+    res.write(
+      `data: ${JSON.stringify({
+        type: "error",
+        payload: {
+          code: "INVALID_PAGE_COUNT",
+          message: "Page count must be between 3 and 20",
+          isRetriable: false,
+        },
+      })}\n\n`
+    );
+    return res.end();
+  }
+
+  // Validate fontSizeScale
+  const fontScaleNum = parseFloat(fontSizeScale);
+  if (isNaN(fontScaleNum) || fontScaleNum < 0.8 || fontScaleNum > 1.2) {
+    res.writeHead(400, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+    });
+    res.write(
+      `data: ${JSON.stringify({
+        type: "error",
+        payload: {
+          code: "INVALID_FONT_SCALE",
+          message: "Font size scale must be between 0.8 and 1.2",
+          isRetriable: false,
+        },
+      })}\n\n`
+    );
+    return res.end();
+  }
+
+  try {
+    // === Step 2: Set up SSE response ===
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    });
+
+    // === Step 3: Create sendEvent helper ===
+    const lastTimeUpdate = { timestamp: 0 };
+    const TIME_UPDATE_THROTTLE = 1000; // Throttle time-update to 1/sec max
+
+    const sendEvent = (type, payload) => {
+      try {
+        // Throttle time-update events to prevent UI thrashing
+        if (type === "time-update") {
+          const now = Date.now();
+          if (now - lastTimeUpdate.timestamp < TIME_UPDATE_THROTTLE) {
+            return; // Skip this update
+          }
+          lastTimeUpdate.timestamp = now;
+        }
+
+        const data = JSON.stringify({ type, payload });
+        res.write(`data: ${data}\n\n`);
+
+        console.log(
+          `[${new Date().toISOString()}] [${reqId}] SSE: ${type} sent`
+        );
+      } catch (err) {
+        console.error(
+          `[${new Date().toISOString()}] [${reqId}] Failed to send SSE event:`,
+          err
+        );
+      }
+    };
+
+    // === Step 4: Create CallManager with SSE callbacks ===
+    const CallManager = require("./CallManager");
+
+    // Calculate deadline: 10s base + 5s per page + 10s buffer
+    const deadlineMs = 10000 + pageCountNum * 5000 + 10000;
+    const deadline = Date.now() + deadlineMs;
+
+    console.log(
+      `[${new Date().toISOString()}] [${reqId}] Creating CallManager: deadline=${deadlineMs}ms, pageCount=${pageCountNum}`
+    );
+
+    const callManager = new CallManager({
+      deadline,
+      startTime: Date.now(),
+      quotaLimit: 20,
+      quotaWindow: 60000,
+
+      onStatusChange: (status) => {
+        // Route CallManager status updates to SSE stream
+        // Status object has: { type, quotaStatus, timeStatus, callIndex, callType, durationMs, ... }
+
+        if (status.type === "quota-update" && status.quotaStatus) {
+          sendEvent("quota-update", {
+            callsInWindow: status.quotaStatus.callsInWindow,
+            percentUsed: status.quotaStatus.percentUsed,
+            isExhausted: status.quotaStatus.percentUsed >= 100,
+          });
+        } else if (status.type === "time-update" && status.timeStatus) {
+          sendEvent("time-update", {
+            elapsedMs: status.timeStatus.elapsedMs,
+            budgetMs: status.timeStatus.budgetMs,
+            percentUsed: status.timeStatus.percentUsed,
+            isExceeded: status.timeStatus.isExceeded,
+          });
+        } else if (status.type === "time-tight" && status.timeStatus) {
+          sendEvent("time-tight", {
+            percentUsed: status.timeStatus.percentUsed,
+            remaining: status.timeStatus.remainingMs,
+            urgency: status.timeStatus.percentUsed > 90 ? "critical" : "high",
+          });
+        } else if (status.type === "call-start") {
+          sendEvent("call-start", {
+            callIndex: status.callIndex,
+            callType: status.callType,
+            model: status.model,
+          });
+        } else if (status.type === "call-complete") {
+          sendEvent("call-complete", {
+            callIndex: status.callIndex,
+            callType: status.callType,
+            durationMs: status.durationMs,
+            status: "success",
+          });
+        }
+      },
+
+      onDeferral: (event) => {
+        // Route CallManager deferral events to SSE
+        // Event has: { callIndex, callType, reason, waitMs }
+        sendEvent("call-deferred", {
+          callIndex: event.callIndex,
+          callType: event.callType,
+          reason: event.reason || "quota-exhausted",
+          waitMs: event.waitMs || 0,
+        });
+      },
+    });
+
+    // === Step 5: Call ebookService with CallManager ===
+    console.log(
+      `[${new Date().toISOString()}] [${reqId}] Calling ebookService.handle() with CallManager`
+    );
+
+    const result = await ebookService.handle({
+      prompt,
+      metadata: {
+        theme,
+        pageCount: pageCountNum,
+        colorPalette,
+        fontSizeScale: fontScaleNum,
+      },
+      callManager, // Pass CallManager for orchestration
+    });
+
+    // === Step 6: Send completion event ===
+    const totalTime = Date.now() - startTime;
+    console.log(
+      `[${new Date().toISOString()}] [${reqId}] Generation complete in ${totalTime}ms`
+    );
+
+    sendEvent("complete", {
+      totalCalls: callManager.totalCallsAttempted,
+      totalSucceeded: callManager.totalCallsSucceeded,
+      totalFailed: callManager.totalCallsFailed,
+      totalTime,
+      pageCount: pageCountNum,
+      success: true,
+    });
+
+    res.end();
+  } catch (error) {
+    // === Step 7: Send error event ===
+    console.error(
+      `[${new Date().toISOString()}] [${reqId}] SSE endpoint error:`,
+      error
+    );
+
+    try {
+      // Only try to write if response hasn't already been closed
+      if (!res.headersSent) {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+        });
+      }
+
+      // Determine if error is retriable
+      let isRetriable = true;
+      if (error.code) {
+        const fatalCodes = [
+          "INVALID_ARGUMENT",
+          "AUTHENTICATION_FAILED",
+          "INVALID_API_KEY",
+          "NOT_FOUND",
+          "PERMISSION_DENIED",
+          400,
+          401,
+          403,
+          404,
+        ];
+        isRetriable = !fatalCodes.includes(error.code);
+      }
+
+      const errorEvent = {
+        type: "error",
+        payload: {
+          code: error.code || "UNKNOWN_ERROR",
+          message: error.message || "An unexpected error occurred",
+          isRetriable,
+          context: {
+            callIndex: error.callIndex || null,
+            callType: error.callType || null,
+          },
+        },
+      };
+
+      res.write(`data: ${JSON.stringify(errorEvent)}\n\n`);
+      res.end();
+    } catch (writeErr) {
+      console.error(
+        `[${new Date().toISOString()}] [${reqId}] Failed to send error event:`,
+        writeErr
+      );
+      res.end();
+    }
+  }
+});
+
 // ==================== LEGACY ENDPOINT (DEPRECATED) ====================
 // Kept for backward compatibility if needed
 // This is the old synchronous endpoint - should use polling model instead

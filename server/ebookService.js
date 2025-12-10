@@ -93,12 +93,15 @@ async function handle(payload, classification) {
     throw e;
   }
 
-  // ✅ NEW: Create CallManager for quota/time orchestration [SEQ-CORE-001]
-  const callManager = createCallManager(pageCount, {
-    deadline: payload.metadata?.deadline,
-    onStatusChange: payload.metadata?.onStatusChange,
-    onDeferral: payload.metadata?.onDeferral,
-  });
+  // ✅ NEW: Use external CallManager if provided (Stage 3 SSE endpoint)
+  // Otherwise create one for backward compatibility [SEQ-CORE-001]
+  const callManager =
+    payload.callManager ||
+    createCallManager(pageCount, {
+      deadline: payload.metadata?.deadline,
+      onStatusChange: payload.metadata?.onStatusChange,
+      onDeferral: payload.metadata?.onDeferral,
+    });
 
   console.log("[EBOOK] CallManager initialized for generation session");
   console.log(

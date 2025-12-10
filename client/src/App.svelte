@@ -15,6 +15,9 @@
   import PageCountSlider from './components/PageCountSlider.svelte';
   import OverrideForm from './components/OverrideForm.svelte';
   import ThemePreview from './components/ThemePreview.svelte';
+  
+  // Phase 3: Real-time progress tracking
+  import EbookProgressTracker from './components/EbookProgressTracker.svelte';
 
   // Fetch backend health status on mount
   let health = null;
@@ -30,6 +33,10 @@
   $: ebookResult = $ebookStore.result;
   $: ebookLoading = $ebookStore.loading;
   $: ebookError = $ebookStore.error;
+  
+  // Phase 3: Progress tracking state
+  let showProgressTracker = false;
+  let sseEndpointUrl = null;
 
   async function checkHealth() {
     appState.update(state => ({ ...state, loading: true, error: null }));
@@ -43,6 +50,39 @@
       apiError = err.message;
       appState.update(state => ({ ...state, loading: false, error: err.message }));
     }
+  }
+
+  // Phase 3: Progress tracker callbacks
+  function handleProgressComplete(result) {
+    console.log('✓ eBook generation complete:', result);
+    showProgressTracker = false;
+    // ebookStore will have already been updated by the generation endpoint
+    // Just show success feedback if needed
+  }
+
+  function handleProgressError(error) {
+    console.error('✗ eBook generation error:', error);
+    showProgressTracker = false;
+    ebookStore.update(s => ({ ...s, error: error.message }));
+  }
+
+  // Phase 3: Initiate ebook generation with SSE progress tracking
+  function generateWithProgress() {
+    if (!prompt.trim()) return;
+    
+    // Build SSE endpoint URL with query parameters
+    const params = new URLSearchParams({
+      prompt: prompt,
+      theme: ebookConfig.theme,
+      pageCount: ebookConfig.pageCount.toString(),
+      fontSizeScale: '1.0',
+    });
+    
+    // Set SSE URL and show progress tracker
+    sseEndpointUrl = `/api/ebook/generate-with-progress?${params.toString()}`;
+    showProgressTracker = true;
+    
+    console.log('Initiating eBook generation with SSE:', sseEndpointUrl);
   }
 
   async function submitPrompt() {
@@ -132,12 +172,21 @@
           ></textarea>
           <button 
             class="generate-button"
-            on:click={() => ebookStore.generate(prompt)}
-            disabled={ebookLoading || !prompt.trim()}
+            on:click={generateWithProgress}
+            disabled={showProgressTracker || !prompt.trim()}
           >
-            {ebookLoading ? 'Generating eBook...' : 'Generate eBook'}
+            {showProgressTracker ? 'Generating with progress...' : 'Generate eBook'}
           </button>
         </div>
+        
+        <!-- Phase 3: Real-time progress tracking -->
+        {#if showProgressTracker && sseEndpointUrl}
+          <EbookProgressTracker 
+            url={sseEndpointUrl}
+            onComplete={handleProgressComplete}
+            onError={handleProgressError}
+          />
+        {/if}
         
         {#if ebookLoading}
           <p class="loading-message">Generating e-book...</p>
