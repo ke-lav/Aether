@@ -82,9 +82,9 @@ npm run dev
 
 1. **Happy Path: 3-Page Generation**
 
-   - [ ] Navigate to ebook mode
-   - [ ] Enter prompt: "A short children's story about a brave mouse"
-   - [ ] Set page count to 3
+   - [x] Navigate to ebook mode
+   - [x] Enter prompt: "A short children's story about a brave mouse"
+   - [x] Set page count to 3
    - [ ] Click "Generate eBook"
    - [ ] Verify progress tracker appears
    - [ ] Open DevTools → Network → Check for EventSource stream
