@@ -83,7 +83,11 @@ class RealAIService {
         const e = new Error(`Gemini call failed: ${errMsg}`);
 
         // Detect quota exhaustion errors from API
-        if (errMsg.includes("quota") || errMsg.includes("429") || status === 429) {
+        if (
+          errMsg.includes("quota") ||
+          errMsg.includes("429") ||
+          status === 429
+        ) {
           Object.defineProperty(e, "isQuotaError", {
             value: true,
             enumerable: true,
@@ -104,32 +108,43 @@ class RealAIService {
         throw e;
       }
 
-    // Prefer parsed text candidate, fall back to rawText or JSON.stringify
-    let text =
-      resp.text || resp.rawText || (resp.json ? JSON.stringify(resp.json) : "");
-    if (!text) text = String(resp.rawText || "");
+      // Prefer parsed text candidate, fall back to rawText or JSON.stringify
+      let text =
+        resp.text ||
+        resp.rawText ||
+        (resp.json ? JSON.stringify(resp.json) : "");
+      if (!text) text = String(resp.rawText || "");
 
-    // Simple heuristics for title/body: first line as title, rest as body
-    const lines = text
-      .split(/\n+/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    const title =
-      lines.length > 0
-        ? lines[0].slice(0, 200)
-        : `Result for: ${String(prompt).slice(0, 50)}`;
-    const body = lines.length > 1 ? lines.slice(1).join("\n\n") : text;
-    const layout = "ai-generated";
+      // Simple heuristics for title/body: first line as title, rest as body
+      const lines = text
+        .split(/\n+/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const title =
+        lines.length > 0
+          ? lines[0].slice(0, 200)
+          : `Result for: ${String(prompt).slice(0, 50)}`;
+      const body = lines.length > 1 ? lines.slice(1).join("\n\n") : text;
+      const layout = "ai-generated";
 
-    const metadata = {
-      model: resp.json?.model || "gemini",
-      status: resp.status,
-    };
+      const metadata = {
+        model: resp.json?.model || "gemini",
+        status: resp.status,
+      };
 
-    return {
-      content: { title, body, layout },
-      metadata,
-    };
+      return {
+        content: { title, body, layout },
+        metadata,
+      };
+    } catch (error) {
+      // Handle any errors from callGemini or response processing
+      const e = new Error(`AI generation failed: ${error.message}`);
+      Object.defineProperty(e, "originalError", {
+        value: error,
+        enumerable: false,
+      });
+      throw e;
+    }
   }
 
   /**
