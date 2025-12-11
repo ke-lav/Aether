@@ -81,22 +81,27 @@ class QuotaTracker {
       secondsUntilReset: Math.max(0, secondsUntilReset),
       dailyCallCount: this.dailyCallCount,
       lastError: this.lastError,
-      message: this.getMessage(),
     };
   }
 
   getMessage() {
-    const status = this.getStatus();
-    if (status.isPaused) {
-      return `Quota cooldown active. Resume in ${status.secondsUntilReset}s.`;
+    const percentUsed = Math.round((this.callCount / this.limit) * 100);
+    const isPaused = this.isPaused();
+    const remaining = Math.max(0, this.limit - this.callCount);
+    const secondsUntilReset = isPaused
+      ? Math.ceil((this.pauseUntil - Date.now()) / 1000)
+      : 0;
+
+    if (isPaused) {
+      return `Quota cooldown active. Resume in ${secondsUntilReset}s.`;
     }
-    if (status.percentUsed >= 90) {
-      return `Quota at ${status.percentUsed}%. ${status.remaining} calls remaining.`;
+    if (percentUsed >= 90) {
+      return `Quota at ${percentUsed}%. ${remaining} calls remaining.`;
     }
-    if (status.percentUsed >= 75) {
-      return `Quota approaching. ${status.remaining} calls left.`;
+    if (percentUsed >= 75) {
+      return `Quota approaching. ${remaining} calls left.`;
     }
-    return `Quota normal. ${status.remaining}/${status.limit} calls available.`;
+    return `Quota normal. ${remaining}/${this.limit} calls available.`;
   }
 
   rotateWindow() {
